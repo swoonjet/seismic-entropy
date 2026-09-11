@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>seismic entropy</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #08090b;
+    --fg: #d8dce0;
+    --dim: #52585f;
+    --accent: #5fd3a6;
+    --flash: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+  }
+  /* A true character matrix: every glyph (digit, letter, or the single
+     space between tokens) is one monospace advance-width cell. No grid,
+     no per-token box model (no padding/margin/border) -- word-break:
+     break-all forces the browser to wrap at a fixed character count per
+     line regardless of word boundaries, so every row lines up into the
+     same column positions as every other row. */
+  #wall {
+    position: absolute; inset: 0; top: 44px;
+    overflow-y: auto;
+    padding: 0.6em 0.8em;
+    font-size: 15px;
+    line-height: 2.2em;
+    letter-spacing: 0.35em;
+    white-space: normal;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+  .tok {
+    color: var(--dim);
+  }
+  .tok.num {
+    color: var(--fg);
+    cursor: pointer;
+  }
+  .tok.num:hover { color: var(--accent); }
+  .tok.num.copied { color: var(--flash) !important; }
+  .tok.lbl {
+    color: var(--accent);
+  }
+
+  #bar {
+    position: absolute; top: 0; left: 0; right: 0; height: 44px;
+    display: flex; align-items: center; gap: 1.5em;
+    padding: 0 1em;
+    border-bottom: 1px solid #1c1f23;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  #bar .title { color: var(--fg); font-weight: 600; letter-spacing: 0.04em; }
+  #bar .subtitle { color: var(--dim); }
+  #bar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); display: inline-block; margin-right: 0.5em; }
+  #bar .dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  #bar a { color: var(--dim); text-decoration: none; border-bottom: 1px dotted var(--dim); }
+  #bar a:hover { color: var(--fg); }
+  #bar .spacer { flex: 1; }
+
+  #toast {
+    position: fixed; bottom: 1.2em; left: 50%; transform: translateX(-50%) translateY(10px);
+    background: #14171a; border: 1px solid #2a2f34; color: var(--fg);
+    padding: 0.5em 1em; border-radius: 4px; font-size: 12px;
+    opacity: 0; transition: opacity 0.15s, transform 0.15s;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <span class="title">SEISMIC ENTROPY</span>
+  <span class="subtitle">true random numbers extracted from live seismic sensor noise</span>
+  <span><span class="dot" id="livedot"></span><span id="statustext">connecting…</span></span>
+  <span class="spacer"></span>
+  <span id="counter">0 numbers</span>
+  <a id="randomlink" href="/api/random?n=10" target="_blank">GET /api/random</a>
+  <a id="statuslink" href="/api/status" target="_blank">/api/status</a>
+</div>
+
+<div id="wall"></div>
+<div id="toast">copied</div>
+
+<script>
+const wall = document.getElementById('wall');
+const toast = document.getElementById('toast');
+const livedot = document.getElementById('livedot');
+const statustext = document.getElementById('statustext');
+const counterEl = document.getElementById('counter');
+
+const MAX_TOKENS = 4000; // bounds DOM size over a long-running session
+let lastStationId = null;
+let totalNumbers = 0;
+let tokenCount = 0;
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), 900);
+}
+
+function addToken({ kind, text, copyValue }) {
+  const el = document.createElement('span');
+  el.className = 'tok ' + kind;
+  el.textContent = text;
+  if (kind === 'num') {
+    el.addEventListener('click', () => {
+      navigator.clipboard.writeText(copyValue).then(() => {
+        showToast('copied ' + copyValue);
+        el.classList.add('copied');
+        setTimeout(() => el.classList.remove('copied'), 300);
+      }).catch(() => showToast('copy failed'));
+    });
+  }
+  wall.appendChild(el);
+  tokenCount++;
+  while (wall.childNodes.length > MAX_TOKENS) {
+    wall.removeChild(wall.firstChild);
+  }
+  wall.scrollTop = wall.scrollHeight;
+}
+
+function handleEvent(ev) {
+  if (ev.station_id !== lastStationId) {
+    addToken({ kind: 'lbl', text: ev.station_label.replace(/,/g, '') });
+    lastStationId = ev.station_id;
+  }
+  addToken({ kind: 'num', text: ev.digits, copyValue: ev.digits });
+  totalNumbers++;
+  counterEl.textContent = totalNumbers.toLocaleString() + ' numbers';
+}
+
+// When this page is served by its own backend (local dev, or the Fly.io
+// app itself) location.host IS the backend. When served as a static page
+// elsewhere (jontoews.com/seismic), it has to point at the backend
+// explicitly instead.
+const SELF_HOSTED = ['127.0.0.1', 'localhost', 'seismic-entropy.fly.dev'].includes(location.hostname);
+const BACKEND_HOST = SELF_HOSTED ? location.host : 'seismic-entropy.fly.dev';
+const BACKEND_PROTO = SELF_HOSTED ? location.protocol : 'https:';
+
+document.getElementById('randomlink').href = `${BACKEND_PROTO}//${BACKEND_HOST}/api/random?n=10`;
+document.getElementById('statuslink').href = `${BACKEND_PROTO}//${BACKEND_HOST}/api/status`;
+
+function connect() {
+  const proto = BACKEND_PROTO === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(proto + '://' + BACKEND_HOST + '/ws');
+
+  ws.onopen = () => {
+    livedot.classList.add('live');
+    statustext.textContent = 'live';
+  };
+  ws.onclose = () => {
+    livedot.classList.remove('live');
+    statustext.textContent = 'reconnecting…';
+    setTimeout(connect, 2000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (msg) => {
+    try { handleEvent(JSON.parse(msg.data)); } catch (e) { /* ignore malformed */ }
+  };
+}
+
+connect();
+</script>
+
+</body>
+</html>
