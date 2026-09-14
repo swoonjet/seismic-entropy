@@ -6,7 +6,7 @@ Earth right now.
 
 **Live**: [jontoews.com/seismic](https://jontoews.com/seismic/) (static
 frontend) — backend at
-[seismic-entropy.fly.dev](https://seismic-entropy.fly.dev) (Fly.io).
+[seismic.jontoews.com](https://seismic.jontoews.com/api/status).
 
 ## How it works
 
@@ -50,21 +50,30 @@ Then open `http://127.0.0.1:8420/`.
 
 Two pieces, deployed separately:
 
-1. **Backend** (Fly.io, app name `seismic-entropy`, region `ord`) — the
-   actual persistent process holding the SeedLink connection open. Deploy
-   changes with `flyctl deploy` from this directory. `fly.toml` pins
-   `min_machines_running = 1` / `auto_stop_machines = false` deliberately —
-   this can't be allowed to scale to zero on idle like a normal web app,
-   since the whole point is an always-open connection to IRIS.
+1. **Backend** — the actual persistent process holding the SeedLink
+   connection open. It runs on a DigitalOcean droplet as the systemd unit
+   `seismic-entropy.service` (non-root `seismic` user, `Restart=always`,
+   `MemoryMax=400M`), listening on `127.0.0.1:8420` behind nginx + Let's
+   Encrypt at `seismic.jontoews.com`. Deploy with
+   `rsync -a backend frontend requirements.txt root@<droplet>:/opt/seismic-entropy/`
+   then `systemctl restart seismic-entropy`.
+
+   A plain VM is the right shape for this, not a scale-to-zero PaaS: the
+   app holds one always-open TCP connection to IRIS 24/7, so anything that
+   sleeps on idle kills the feed. This ran on Fly.io until 2026-09-14,
+   where `fly.toml` had to pin `min_machines_running = 1` to fight exactly
+   that; `fly.toml` and the `Dockerfile` are kept for reference and still
+   work if it ever moves back to a container host.
+
 2. **Frontend** (`frontend/index.html`, no build step) — mirrored as a
    static file to `~/swoonjet.github.io/seismic/index.html` and pushed
    there to go live at jontoews.com/seismic (same pattern as Cadastre/
    Lampo/etc., see `reference_jontoews_personal_site_deploy` memory). The
-   page detects whether it's self-hosted (localhost, or the Fly.io domain
+   page detects whether it's self-hosted (localhost, or the backend domain
    itself) vs. mirrored elsewhere, and points its WebSocket/API links at
-   `seismic-entropy.fly.dev` explicitly when it's not. After editing
-   `frontend/index.html`, re-copy it to the pages repo and push there too
-   — the two copies are not symlinked, just kept in sync by hand.
+   `seismic.jontoews.com` explicitly when it's not. After editing
+   `frontend/index.html`, re-copy it to the pages repo AND to the droplet
+   — the three copies are not symlinked, just kept in sync by hand.
 
 ## Known gaps / next steps
 
