@@ -139,12 +139,12 @@ function handleEvent(ev) {
   counterEl.textContent = totalNumbers.toLocaleString() + ' numbers';
 }
 
-// When this page is served by its own backend (local dev, or the Fly.io
-// app itself) location.host IS the backend. When served as a static page
+// When this page is served by its own backend (local dev, or the droplet
+// itself) location.host IS the backend. When served as a static page
 // elsewhere (jontoews.com/seismic), it has to point at the backend
 // explicitly instead.
-const SELF_HOSTED = ['127.0.0.1', 'localhost', 'seismic-entropy.fly.dev'].includes(location.hostname);
-const BACKEND_HOST = SELF_HOSTED ? location.host : 'seismic-entropy.fly.dev';
+const SELF_HOSTED = ['127.0.0.1', 'localhost', 'seismic.jontoews.com'].includes(location.hostname);
+const BACKEND_HOST = SELF_HOSTED ? location.host : 'seismic.jontoews.com';
 const BACKEND_PROTO = SELF_HOSTED ? location.protocol : 'https:';
 
 document.getElementById('randomlink').href = `${BACKEND_PROTO}//${BACKEND_HOST}/api/random?n=10`;
