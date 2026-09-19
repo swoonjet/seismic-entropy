@@ -3,15 +3,14 @@ wall, and a small public REST API (ANU QRNG style) for pulling seeds.
 
 Entropy flows: SeedLink background thread -> EntropyPool -> two sinks:
   - a broadcast to every connected WebSocket (the visual)
-  - a thread-safe FIFO that /api/random pops from (numbers served over the
-    API are consumed once and never repeated to another caller)
+  - a bounded thread-safe FIFO that /api/random pops from (numbers served
+    over the API are consumed once and never repeated to another caller)
 """
 
 import asyncio
 import collections
 import logging
 import pathlib
-import queue
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -31,7 +30,14 @@ app = FastAPI(title="Seismic Entropy")
 pool = EntropyPool()
 feed = SeismicFeed(on_samples=pool.ingest)
 
-api_queue = queue.Queue()  # numbers waiting to be served via /api/random, FIFO
+# Bounded on purpose. Entropy is produced continuously by nine stations and
+# drained only when someone calls /api/random, so an unbounded queue is a slow
+# leak: it reached millions of events over 4.7 days uptime, grew the process
+# from 60MB to 328MB, and pushed it past MemoryHigh into constant cgroup
+# reclaim until it stopped accepting connections. Oldest entropy is dropped,
+# which is correct — stale randomness has no value.
+API_QUEUE_MAX = 20_000
+api_queue = collections.deque(maxlen=API_QUEUE_MAX)  # served via /api/random, FIFO
 recent_events = collections.deque(maxlen=200)  # for late-joining WS clients
 
 _ws_clients = set()
@@ -40,7 +46,7 @@ _main_loop = None  # captured at startup so the SeedLink thread can hand events 
 
 def _on_entropy_event(event):
     recent_events.append(event)
-    api_queue.put(event)
+    api_queue.append(event)
     if _main_loop is not None:
         _main_loop.call_soon_threadsafe(
             lambda: asyncio.ensure_future(_broadcast(event))
@@ -85,7 +91,7 @@ async def status():
         "stations": [
             {"id": f"{n}.{s}", "label": label} for n, s, _ch, label in STATIONS
         ],
-        "numbers_queued_for_api": api_queue.qsize(),
+        "numbers_queued_for_api": len(api_queue),
     }
 
 
@@ -99,11 +105,15 @@ async def api_random(n: int = 10, timeout: float = 5.0):
     deadline = time.time() + timeout
     results = []
     while len(results) < n and time.time() < deadline:
-        remaining = deadline - time.time()
         try:
-            event = api_queue.get(timeout=max(0.05, remaining))
-        except queue.Empty:
-            break
+            event = api_queue.popleft()
+        except IndexError:
+            # Nothing buffered yet. Yield to the event loop instead of
+            # blocking it — queue.get(timeout=...) is synchronous and stalled
+            # every other request, including the WebSocket feed, for up to
+            # `timeout` seconds on any call that arrived entropy-starved.
+            await asyncio.sleep(0.05)
+            continue
         results.append(
             {
                 "value": event["value"],
