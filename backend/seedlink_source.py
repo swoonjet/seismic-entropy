@@ -22,7 +22,7 @@ from obspy.clients.seedlink.easyseedlink import EasySeedLinkClient
 
 log = logging.getLogger("seedlink_source")
 
-SERVER = "rtserve.iris.washington.edu:18000"
+SERVER = "rtserve.earthscope.org:18000"   # IRIS became EarthScope; rtserve.iris.washington.edu no longer resolves
 
 # (network, station, channel, human label) -- all BHZ, all verified live
 # against the real IRIS ring server (not assumed from FDSN metadata alone).
